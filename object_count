@@ -1,0 +1,75 @@
+------------------OBJECT COUNT VS THRESHOLD-------------------
+
+import numpy as np
+from PIL import Image
+from skimage.measure import label, regionprops
+import matplotlib.pyplot as plt
+
+im = np.array(Image.open("vid2/8bit_halfscale/Fused_Red_24-02-12_064-067_0-500_00000.tif"))
+
+thresholds = np.arange(20, 121, 10)
+
+counts = []
+for t in thresholds:
+    binary = im >= t
+    labels = label(binary)
+    props = regionprops(labels)
+    counts.append(len(props))
+
+plt.figure(figsize=(6,4))
+plt.plot(thresholds, counts, '-o')
+plt.xlabel("Threshold")
+plt.ylabel("Number of Objects Detected")
+plt.title("Object Count vs Threshold")
+plt.show()
+
+------------------OBJECT COUNT VS 30PX FILTER-------------------
+
+import numpy as np
+from skimage import io, morphology
+from PIL import Image
+import matplotlib.pyplot as plt
+import os
+
+fld, subdir = "vid2", "8bit_halfscale"
+fn = sorted(os.listdir(f"{fld}/{subdir}"))[0]
+path_in = os.path.join(fld, subdir, fn)
+
+img = np.array(Image.open(path_in))
+
+best_thresh = 94
+raw_binary = img >= best_thresh
+
+min_size_px = 30
+clean = morphology.remove_small_objects(raw_binary, min_size=min_size_px)
+clean = morphology.remove_small_holes(clean, area_threshold=min_size_px)
+
+fig, axes = plt.subplots(1, 3, figsize=(15,5))
+axes[0].imshow(img, cmap="gray");    axes[0].set_title("Original")
+axes[1].imshow(raw_binary, cmap="gray");axes[1].set_title(f"Binary @ {best_thresh}")
+axes[2].imshow(clean, cmap="gray"); axes[2].set_title(f"Cleaned (min_area={min_size_px})")
+for ax in axes: ax.axis("off")
+plt.tight_layout()
+plt.show()
+
+------------------OTSU THRESHOLDING + 30PX CLEANUP-------------------
+
+import numpy as np
+from PIL import Image
+import matplotlib.pyplot as plt
+
+# Pick one example file from your output folder
+test_mask_path = "otsu_thresholded_vid1/Fused_Red_24-02-12_080-083-0007.tif"  
+orig_path      = "vid1/8bit_halfscale/Fused_Red_24-02-12_080-083-0007.tif"
+
+# Load images
+orig = np.array(Image.open(orig_path))
+mask = np.array(Image.open(test_mask_path))
+
+# Show side-by-side
+fig, ax = plt.subplots(1, 2, figsize=(10,5))
+ax[0].imshow(orig, cmap="gray"); ax[0].set_title("Original Frame")
+ax[1].imshow(mask, cmap="gray"); ax[1].set_title("Otsu Threshold + Cleanup")
+for a in ax: a.axis("off")
+plt.tight_layout()
+plt.show()
