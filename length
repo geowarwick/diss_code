@@ -1,0 +1,97 @@
+---------------------FILAMENT_PERCENTILES-------------------
+
+key_ps = [0.25, 0.50, 0.75, 0.95]
+key_vals = [lengths.quantile(p) for p in key_ps]
+
+plt.figure(figsize=(5,3))
+plt.scatter([p*100 for p in key_ps], key_vals, color='crimson', s=50)
+for p, val in zip(key_ps, key_vals):
+    plt.text(p*100 + 1, val + 1, f"{int(p*100)}th: {val:.1f}", color='crimson')
+
+plt.plot(pct_axis, quantile_values, color='lightgray', linewidth=1)  
+plt.xlabel('Percentile (%)')
+plt.ylabel('Filament Length (px)')
+plt.title('Key Percentiles of Filament Lengths')
+plt.xlim(0, 100)
+plt.ylim(0, max(quantile_values) * 1.05)
+plt.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+cutoff_px = length_per_filament['avg_length_px'].quantile(0.95)  # ≃129 px
+clean_filaments = length_per_filament[length_per_filament['avg_length_px'] <= cutoff_px]
+
+print(f"Filtered out {len(length_per_filament) - len(clean_filaments)} “merged” filaments (avg_length_px > {cutoff_px:.1f} px).")
+
+--------------------------AVG_LENGTH_AVG_SPEED--------------------------
+
+import numpy as np
+import pandas as pd
+
+linked = pd.read_csv('filament_tracks_all.csv')
+
+import os, glob
+from skimage import measure, filters
+from PIL import Image
+
+impath  = 'vid1/8bit_halfscale'
+pattern = 'Fused_Red_24-02-12_080-083-*.tif'
+files   = sorted(glob.glob(os.path.join(impath, pattern)))
+
+length_rows = []
+for frame_idx, fname in enumerate(files):
+    im = np.array(Image.open(fname))
+    thresh = filters.threshold_otsu(im)
+    binary = im >= thresh
+    labels = measure.label(binary)
+    props  = measure.regionprops(labels)
+    for p in props:
+        y, x        = p.centroid
+        length_px   = p.major_axis_length
+        length_rows.append({'frame':frame_idx,'x_len':x,'y_len':y,'length_px':length_px})
+
+lengths_df = pd.DataFrame(length_rows)
+
+linked['x_int']       = np.round(linked['x']).astype(int)
+linked['y_int']       = np.round(linked['y']).astype(int)
+lengths_df['x_int']   = np.round(lengths_df['x_len']).astype(int)
+lengths_df['y_int']   = np.round(lengths_df['y_len']).astype(int)
+
+merged = pd.merge(
+    linked,
+    lengths_df[['frame','x_int','y_int','length_px']],
+    on=['frame','x_int','y_int'],
+    how='left'
+)
+
+length_per_filament = (
+    merged
+    .groupby('particle')['length_px']
+    .mean()
+    .reset_index(name='avg_length_px')
+)
+
+cutoff = length_per_filament['avg_length_px'].quantile(0.95)
+length_per_filament = length_per_filament[length_per_filament['avg_length_px'] <= cutoff].copy()
+
+if 'dist_px' not in linked.columns:
+    linked['dx']      = linked.groupby('particle')['x'].diff()
+    linked['dy']      = linked.groupby('particle')['y'].diff()
+    linked['dist_px'] = np.hypot(linked['dx'], linked['dy'])
+
+avg_speed_px_per_frame = (
+    linked
+    .groupby('particle')['dist_px']
+    .mean()
+    .reset_index(name='avg_speed_px_per_frame')
+)
+
+summary = pd.merge(
+    length_per_filament,
+    avg_speed_px_per_frame,
+    on='particle',
+    how='inner'
+)
+
+print(f"Number of filaments used: {len(summary)}")
+summary.head()
