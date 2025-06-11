@@ -1,0 +1,78 @@
+---------------CENTROID DETECTION--------------
+
+import os
+import numpy as np
+from skimage import io, measure
+import matplotlib.pyplot as plt
+
+fn       = "Fused_Red_24-02-12_064-067_0-500_00000.tif"
+mask     = io.imread(os.path.join("otsu_thresholded_vid2", fn)) > 0
+
+labels = measure.label(mask)
+props  = measure.regionprops(labels)
+ys     = [p.centroid[0] for p in props]
+xs     = [p.centroid[1] for p in props]
+
+fig, ax = plt.subplots(figsize=(6,6))
+ax.imshow(mask, cmap="gray")
+pts = ax.scatter(xs, ys, c='r', s=30)
+ax.set_title("Click each filament centroid, then press Enter")
+ax.axis("off")
+plt.show()
+
+---------------SEPARATION OF OVERLAPPING FILAMENTS--------------
+
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+from skimage import io, filters, measure, morphology
+from scipy.ndimage import convolve
+
+fn = "Fused_Red_24-02-12_064-067_0-500_00000.tif"
+orig_folder = "vid2/8bit_halfscale"
+clean_folder = "otsu_thresholded_vid2"
+
+im = io.imread(os.path.join(orig_folder, fn))
+thresh = filters.threshold_otsu(im)
+raw_binary = im >= thresh
+
+clean_mask = io.imread(os.path.join(clean_folder, fn)) > 0
+
+labels = measure.label(clean_mask)
+K = np.ones((3,3), int); K[1,1] = 0
+
+good_centers = []
+bad_centers  = []
+
+for region in measure.regionprops(labels):
+    blob = (labels == region.label)
+    skel = morphology.skeletonize(blob)
+    nbrs = convolve(skel.astype(int), K, mode='constant', cval=0)
+    endpoints = np.logical_and(skel, nbrs == 1).sum()
+    
+    y, x = region.centroid
+    if endpoints == 2:
+        good_centers.append((x, y))
+    else:
+        bad_centers.append((x, y))
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+
+ax1.imshow(raw_binary, cmap="gray")
+ax1.set_title(f"Otsu Threshold (T={thresh:.0f})")
+ax1.axis("off")
+
+ax2.imshow(clean_mask, cmap="gray")
+for x, y in good_centers:
+    ax2.plot(x, y, 'go', markersize=8)        # green = exactly 2 ends
+for x, y in bad_centers:
+    ax2.plot(x, y, 'ro', markersize=8)        # red   = ≠2 ends
+ax2.set_title("Cleaned Mask\ngreen=2-end filaments, red=overlaps")
+ax2.axis("off")
+
+plt.tight_layout()
+plt.show()
+
+
+
+
