@@ -1,0 +1,61 @@
+-----------------SPEED IN PX_PER_FRAME----------------------
+
+import pandas as pd
+import numpy as np
+
+linked = pd.read_csv('filament_tracks_all.csv')
+
+print("Columns:", linked.columns.tolist())
+if 'dist_px' not in linked.columns:
+    print("Computing dist_px from dx,dy …")
+    if 'dx' not in linked.columns or 'dy' not in linked.columns:
+        linked.sort_values(['particle','frame'], inplace=True, ignore_index=True)
+        linked['dx'] = linked.groupby('particle')['x'].diff()
+        linked['dy'] = linked.groupby('particle')['y'].diff()
+    linked['dist_px'] = np.hypot(linked['dx'], linked['dy'])
+    print("  • dist_px computed.")
+
+avg_speed_px_per_frame = (
+    linked
+    .groupby('particle')['dist_px']
+    .mean()
+    .reset_index(name='avg_speed_px_per_frame')
+)
+dt = 10  
+avg_speed_px_per_s = avg_speed_px_per_frame.copy()
+avg_speed_px_per_s['avg_speed_px_per_s'] = avg_speed_px_per_s['avg_speed_px_per_frame'] / dt
+
+print("Average speed (pixels / frame) for first 10 filaments:")
+display(avg_speed_px_per_frame.head(10))
+
+print("\nAverage speed (pixels / second) for first 10 filaments:")
+
+-----------------MOVING_AVERAGE----------------------
+
+import pandas as pd
+
+linked = pd.read_csv('filament_tracks_all.csv')
+
+jitter_thresh_px = 2.0   # ignore any frame‐to‐frame moves < 1 px
+
+first10 = sorted(linked['particle'].unique())[:10]
+
+results = []
+for pid in first10:
+    df = linked[linked['particle'] == pid].copy()
+    # only keep rows where the filament actually moved by > jitter_thresh_px
+    moving = df[df['dist_px'] > jitter_thresh_px]
+    avg_px = moving['dist_px'].mean()
+    avg_um_s = moving['speed_um_s'].mean()
+    results.append({
+        'particle': pid,
+        'n_total_frames': len(df),
+        'n_moving_frames': len(moving),
+        'avg_speed_px_per_frame (moving only)': avg_px,
+        'avg_speed_µm_per_s (moving only)': avg_um_s
+    })
+
+out = pd.DataFrame(results)
+print("Average speeds (moving only) for first 10 filaments:\n")
+display(out)
+display(avg_speed_px_per_s[['particle','avg_speed_px_per_s']].head(10))
