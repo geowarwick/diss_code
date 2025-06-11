@@ -1,0 +1,160 @@
+----------------2 ENDPOINTS AND AT LEAST 1 BRANCH------------------
+
+import numpy as np
+import matplotlib.pyplot as plt
+from skimage import filters, measure, morphology
+from PIL import Image
+
+def count_skel_features(skel):
+    padded = np.pad(skel.astype(np.uint8), pad_width=1, mode='constant')
+    neighbor_offsets = [(-1,-1), (-1,0), (-1,1),
+                        ( 0,-1),         ( 0,1),
+                        ( 1,-1), ( 1,0), ( 1,1)]
+    num_endpoints = 0
+    num_branchpoints = 0
+
+    rows, cols = np.nonzero(padded)
+    for r, c in zip(rows, cols):
+        if padded[r, c] == 0:
+            continue
+        nn = 0
+        for dr, dc in neighbor_offsets:
+            nr, nc = r + dr, c + dc
+            if (0 <= nr < padded.shape[0]) and (0 <= nc < padded.shape[1]) and padded[nr, nc] == 1:
+                nn += 1
+        if nn == 1:
+            num_endpoints += 1
+        elif nn >= 3:
+            num_branchpoints += 1
+
+    return num_endpoints, num_branchpoints
+impath  = 'vid1/8bit_halfscale'                            
+fname   = 'Fused_Red_24-02-12_080-083-0334.tif'             
+path334 = f"{impath}/{fname}"
+
+im334 = np.array(Image.open(path334))
+
+th334  = filters.threshold_otsu(im334)
+binary = im334 >= th334
+
+labels = measure.label(binary)
+props  = measure.regionprops(labels)
+
+print(f"Total blobs in Frame 334: {len(props)}")
+
+plecto_centroids = []
+plecto_skeletons = []
+
+for p in props:
+ 
+    blob_mask = (labels == p.label)
+
+    skel_blob = morphology.skeletonize(blob_mask)
+
+    epi, bpi = count_skel_features(skel_blob)
+
+    if (epi == 2) and (bpi >= 1):
+        yc, xc = p.centroid
+        plecto_centroids.append((xc, yc))
+        plecto_skeletons.append(skel_blob.copy())
+        print(f" → Blob {p.label} flagged: endpoints={epi}, branchpoints={bpi}")
+
+print(f"Plectoneme candidates found in Frame 334: {len(plecto_centroids)}")
+fig, ax = plt.subplots(figsize=(6,6))
+ax.imshow(im334, cmap='gray')
+ax.set_title("Frame 334 — Plectoneme Candidates")
+ax.axis('off')
+
+for (xc, yc) in plecto_centroids:
+    ax.plot(xc, yc,
+            marker='o',
+            color='yellow',
+            markersize=7,
+            markeredgecolor='black',
+            markeredgewidth=1)
+
+for skel_blob in plecto_skeletons:
+    rows, cols = np.nonzero(skel_blob)
+    ax.scatter(cols, rows,
+               s=2,
+               color='deepskyblue',
+               alpha=0.6)
+
+plt.tight_layout()
+plt.show()
+
+----------------EULER NUMBER------------------
+
+import os, glob
+import numpy as np
+import pandas as pd
+from PIL import Image
+from skimage import filters, measure, morphology
+from scipy.spatial.distance import cdist
+
+def count_endpoints(skel):
+    padded = np.pad(skel.astype(np.uint8), 1, mode='constant')
+    offsets = [(-1,-1),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)]
+    epi = 0
+    for r, c in zip(*np.nonzero(padded)):
+        if padded[r, c] == 0: continue
+        nn = sum(
+            padded[r+dr, c+dc]
+            for dr, dc in offsets
+            if 0 <= r+dr < padded.shape[0] and 0 <= c+dc < padded.shape[1]
+        )
+        if nn == 1:
+            epi += 1
+    return epi
+files = sorted(glob.glob(os.path.join(impath, pattern)))
+n_frames = len(files)
+print(f"Found {n_frames} frames")
+
+unique_events = []
+active_tracks = []
+
+for frame_idx, fname in enumerate(files):
+    im = np.array(Image.open(fname))
+    th = filters.threshold_otsu(im)
+    binary = im >= th
+    labels = measure.label(binary)
+    props  = measure.regionprops(labels)
+
+    new_candidates = []
+    for p in props:
+        mask = (labels == p.label)
+        skel = morphology.skeletonize(mask)
+        if count_endpoints(skel) != 2:
+            continue
+        if p.euler_number == 0:
+            yc, xc = p.centroid
+            skel_len = skel.sum()
+            new_candidates.append({'frame': frame_idx, 'x': xc, 'y': yc, 'skel_len': skel_len})
+
+      unmatched = []
+    for cand in new_candidates:
+        found = False
+        for track in active_tracks:
+            if frame_idx - track['last_frame'] > min_lifetime_gap:
+                continue  # too long since last seen
+            dist = np.linalg.norm([track['x'] - cand['x'], track['y'] - cand['y']])
+            if dist <= distance_thresh:
+                track['x'], track['y'] = cand['x'], cand['y']
+                track['last_frame'] = frame_idx
+                found = True
+                break
+        if not found:
+            unmatched.append(cand)
+
+    for u in unmatched:
+        unique_events.append(u)
+        active_tracks.append({'x': u['x'], 'y': u['y'], 'last_frame': frame_idx})
+
+df = pd.DataFrame(unique_events)
+df.to_csv('unique_plectonemes.csv', index=False)
+print(f"Saved {len(df)} unique plectoneme events → unique_plectonemes.csv")
+
+smallest = df.loc[df['skel_len'].idxmin()]
+print("\nSmallest plectoneme:")
+print(smallest)
+
