@@ -1,0 +1,68 @@
+---------------------DISTANCE AND ANGLE RECORDING---------------------
+
+linked['dx'] = linked.groupby('particle')['x'].diff()
+linked['dy'] = linked.groupby('particle')['y'].diff()
+
+linked['dist_px'] = np.hypot(linked['dx'], linked['dy'])
+
+umpp = 3.22  # microns per pixel
+dt   = 10    # seconds between frames
+
+linked['dist_um']    = linked['dist_px'] * umpp
+linked['speed_um_s'] = linked['dist_um'] / dt
+
+linked['angle_deg'] = np.degrees(np.arctan2(linked['dy'], linked['dx']))
+
+linked.head(10)
+
+---------------------REVERSALS---------------------
+
+import pandas as pd
+import numpy as np
+
+linked = pd.read_csv('filament_tracks_all.csv')
+print("Columns loaded:", linked.columns.tolist())
+
+required = {'dx','dy','angle_deg'}
+missing = required - set(linked.columns)
+if missing:
+    print(f"Missing columns: {missing} → computing now from x,y and frame order.")
+
+    linked.sort_values(['particle','frame'], inplace=True, ignore_index=True)
+    
+    linked['dx'] = linked.groupby('particle')['x'].diff()
+    linked['dy'] = linked.groupby('particle')['y'].diff()
+
+    linked['angle_deg'] = np.degrees(np.arctan2(linked['dy'], linked['dx']))
+    
+    print("Computed dx, dy, and angle_deg.")
+else:
+    print("dx, dy, and angle_deg already present.")
+
+linked.sort_values(['particle','frame'], inplace=True, ignore_index=True)
+
+def angle_diff(a, b):
+    """
+    Compute the signed smallest difference between headings a → b (both in degrees).
+    Returns a value in (–180, +180].
+    """
+    d = b - a
+    return (d + 180) % 360 - 180
+
+linked['angle_shift'] = linked.groupby('particle')['angle_deg'].shift(-1)
+
+linked['turn_mag'] = linked.apply(
+    lambda row: abs(angle_diff(row['angle_deg'], row['angle_shift']))
+                if not np.isnan(row['angle_shift']) else np.nan,
+    axis=1
+)
+
+threshold = 150
+linked['is_reversal'] = linked['turn_mag'] > threshold
+
+print("\nPreview (“particle, frame, angle_deg, angle_shift, turn_mag, is_reversal”):")
+display(linked[['particle','frame','angle_deg','angle_shift','turn_mag','is_reversal']].head(15))
+
+rev_counts = linked.groupby('particle')['is_reversal'].sum().astype(int)
+print("\nExample: reversal counts for first few particles:")
+print(rev_counts.head(10))
