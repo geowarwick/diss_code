@@ -58,15 +58,12 @@ import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
 
-# Pick one example file from your output folder
 test_mask_path = "otsu_thresholded_vid1/Fused_Red_24-02-12_080-083-0007.tif"  
 orig_path      = "vid1/8bit_halfscale/Fused_Red_24-02-12_080-083-0007.tif"
 
-# Load images
 orig = np.array(Image.open(orig_path))
 mask = np.array(Image.open(test_mask_path))
 
-# Show side-by-side
 fig, ax = plt.subplots(1, 2, figsize=(10,5))
 ax[0].imshow(orig, cmap="gray"); ax[0].set_title("Original Frame")
 ax[1].imshow(mask, cmap="gray"); ax[1].set_title("Otsu Threshold + Cleanup")
