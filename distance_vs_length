@@ -1,0 +1,245 @@
+------------------DISTANCE AS A FUNCTION OF FILAMENT LENGTH----------------
+
+import os
+import glob
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from skimage import measure, filters, morphology
+from PIL import Image
+
+impath  = 'vid1/8bit_halfscale'
+pattern = 'Fused_Red_24-02-12_080-083-*.tif'
+files   = sorted(glob.glob(os.path.join(impath, pattern)))
+if not files:
+    raise FileNotFoundError(f"No files matching '{pattern}' in folder '{impath}'")
+
+tracks_csv = 'filament_tracks_all.csv'
+if not os.path.isfile(tracks_csv):
+    raise FileNotFoundError(f"Cannot find tracking CSV at '{tracks_csv}'")
+
+W_px                 = 5.0   
+ENDPOINTS_REQUIRED   = 2
+BRANCHPOINTS_ALLOWED = 0
+
+bin_width = 10
+
+dt = 10  
+frame0_path = files[0]
+img0    = np.array(Image.open(frame0_path))
+thresh0 = filters.threshold_otsu(img0)
+binary0 = img0 >= thresh0
+
+labels0 = measure.label(binary0)
+props0  = measure.regionprops(labels0)
+
+if not props0:
+    raise RuntimeError("No filaments detected in frame 0.")
+
+def count_skel_features(skel):
+    padded = np.pad(skel.astype(np.uint8), pad_width=1, mode='constant')
+    rows, cols = np.nonzero(padded)
+    num_endpoints = 0
+    num_branchpoints = 0
+    neighbor_offsets = [(-1, -1), (-1, 0), (-1, +1),
+                        ( 0, -1),           ( 0, +1),
+                        (+1, -1), (+1, 0), (+1, +1)]
+    for r, c in zip(rows, cols):
+        if padded[r, c] == 0:
+            continue
+        nn = 0
+        for dr, dc in neighbor_offsets:
+            nr, nc = r + dr, c + dc
+            if (0 <= nr < padded.shape[0]) and (0 <= nc < padded.shape[1]) and (padded[nr, nc] == 1):
+                nn += 1
+        if nn == 1:
+            num_endpoints += 1
+        elif nn >= 3:
+            num_branchpoints += 1
+    return num_endpoints, num_branchpoints
+
+candidates = []
+for i, p in enumerate(props0):
+    blob_mask = (labels0 == p.label)
+    skel = morphology.skeletonize(blob_mask)
+    epi, bpi = count_skel_features(skel)
+    if (epi == ENDPOINTS_REQUIRED) and (bpi == BRANCHPOINTS_ALLOWED):
+        candidates.append((p.major_axis_length, i, p))
+
+if not candidates:
+    raise RuntimeError("No single‐filament blob found in frame 0 with 2 endpoints and 0 branchpoints.")
+
+max_length0, idx0, longest_blob = max(candidates, key=lambda x: x[0])
+yc0, xc0 = longest_blob.centroid
+print(f"Frame 0 → Total blobs: {len(props0)}")
+print(f"Single‐filament candidates: {len(candidates)}")
+print(f"→ Longest single filament length ≃ {max_length0:.1f} px  (blob index {idx0})")
+print(f"   Centroid = (x={xc0:.1f}, y={yc0:.1f})\n")
+length_rows = []
+for frame_idx, fname in enumerate(files):
+    im = np.array(Image.open(fname))
+    th = filters.threshold_otsu(im)
+    bin_ = im >= th
+    labs = measure.label(bin_)
+    props = measure.regionprops(labs)
+    for p in props:
+        y, x = p.centroid
+        length_rows.append({
+            'frame':    frame_idx,
+            'x_len':    x,
+            'y_len':    y,
+            'length_px': p.major_axis_length
+        })
+
+lengths_df = pd.DataFrame(length_rows, columns=['frame','x_len','y_len','length_px'])
+if lengths_df.empty:
+    raise RuntimeError("No length measurements collected—check segmentation.")
+
+lengths_df['x_int'] = np.round(lengths_df['x_len']).astype(int)
+lengths_df['y_int'] = np.round(lengths_df['y_len']).astype(int)
+
+linked = pd.read_csv(tracks_csv)
+
+if 'dist_px' not in linked.columns:
+    linked.sort_values(['particle','frame'], inplace=True, ignore_index=True)
+    linked['dx']      = linked.groupby('particle')['x'].diff()
+    linked['dy']      = linked.groupby('particle')['y'].diff()
+    linked['dist_px'] = np.hypot(linked['dx'], linked['dy'])
+
+linked['x_int'] = np.round(linked['x']).astype(int)
+linked['y_int'] = np.round(linked['y']).astype(int)
+merged = pd.merge(
+    linked,
+    lengths_df[['frame','x_int','y_int','length_px']],
+    on=['frame','x_int','y_int'],
+    how='left'
+)
+
+length_per_fil = (
+    merged
+    .groupby('particle')['length_px']
+    .mean()
+    .reset_index(name='avg_length_px')
+)
+
+length_per_fil_filtered = length_per_fil[length_per_fil['avg_length_px'] <= max_length0].copy()
+print(f"Filaments before filtering: {len(length_per_fil)}")
+print(f"Filaments after filtering (≤ {max_length0:.1f} px): {len(length_per_fil_filtered)}\n")
+good_particles = set(length_per_fil_filtered['particle'])
+clean_merged   = merged[merged['particle'].isin(good_particles)].copy()
+
+total_dist = (
+    clean_merged
+    .groupby('particle')['dist_px']
+    .sum()
+    .reset_index(name='total_dist_px')
+)
+
+avg_speed = (
+    clean_merged
+    .groupby('particle')['dist_px']
+    .mean()
+    .reset_index(name='avg_speed_px_per_frame')
+)
+
+summary = pd.merge(
+    length_per_fil_filtered,
+    total_dist,
+    on='particle',
+    how='inner'
+)
+summary = pd.merge(
+    summary,
+    avg_speed,
+    on='particle',
+    how='inner'
+)
+
+print("Summary (first 10 filaments):")
+print(summary.head(10).to_string(index=False))
+print()
+
+  max_len = summary['avg_length_px'].max()
+bins    = np.arange(0, np.ceil(max_len / bin_width) * bin_width + bin_width, bin_width)
+
+summary['length_bin'] = pd.cut(
+    summary['avg_length_px'],
+    bins=bins,
+    right=False,
+    labels=bins[:-1]
+).astype(float)
+
+binned = summary.groupby('length_bin').agg(
+    count=('particle', 'size'),
+    mean_total_dist=('total_dist_px', 'mean'),
+    sem_total_dist=('total_dist_px', lambda x: x.std(ddof=1) / np.sqrt(len(x))),
+    mean_speed=('avg_speed_px_per_frame', 'mean'),
+    sem_speed=('avg_speed_px_per_frame', lambda x: x.std(ddof=1) / np.sqrt(len(x)))
+).reset_index()
+
+binned = binned[binned['count'] > 0].copy()
+
+print("Binned summary (first few bins):")
+print(binned.head().to_string(index=False))
+print()
+  plt.figure(figsize=(6,4))
+plt.bar(
+    binned['length_bin'] + bin_width/2,   
+    binned['mean_total_dist'],
+    width=bin_width * 0.9,                 
+    yerr=binned['sem_total_dist'],
+    color='skyblue',
+    edgecolor='k',
+    capsize=4
+)
+plt.xlabel('Filament Length Bin (px)')
+plt.ylabel('Mean Total Distance Traveled (px)')
+plt.title('Total Distance vs. Filament Length (10 px bins)')
+plt.xticks(
+    binned['length_bin'] + bin_width/2,
+    [f"{int(x)}–{int(x+bin_width)}" for x in binned['length_bin']],
+    rotation=45, fontsize='small'
+)
+plt.tight_layout()
+plt.show()
+
+plt.figure(figsize=(6,4))
+plt.errorbar(
+    binned['length_bin'] + bin_width/2,
+    binned['mean_total_dist'],
+    yerr=binned['sem_total_dist'],
+    fmt='-o', color='crimson', ecolor='lightgray', capsize=4
+)
+plt.xlabel('Filament Length Bin (px)')
+plt.ylabel('Mean Total Distance (px)')
+plt.title('Total Distance vs. Filament Length (10 px bins)')
+plt.xticks(
+    binned['length_bin'] + bin_width/2,
+    [f"{int(x)}–{int(x+bin_width)}" for x in binned['length_bin']],
+    rotation=45, fontsize='small'
+)
+plt.tight_layout()
+plt.show()
+
+  norm = plt.Normalize(vmin=binned['mean_speed'].min(), vmax=binned['mean_speed'].max())
+cmap = plt.cm.viridis
+plt.figure(figsize=(6,4))
+bars = plt.bar(
+    binned['length_bin'] + bin_width/2,
+    binned['mean_total_dist'],
+    width=bin_width * 0.9,
+    color=cmap(norm(binned['mean_speed'])),
+    edgecolor='k'
+)
+plt.xlabel('Filament Length Bin (px)')
+plt.ylabel('Mean Total Distance (px)')
+plt.title('Total Distance vs. Length (colored by avg speed)')
+plt.xticks(
+    binned['length_bin'] + bin_width/2,
+    [f"{int(x)}–{int(x+bin_width)}" for x in binned['length_bin']],
+    rotation=45, fontsize='small'
+)
+cbar = plt.colorbar(plt.cm.ScalarMappable(cmap=cmap, norm=norm), pad=0.03)
+cbar.set_label('Mean Speed (px/frame)')
+plt.tight_layout()
+plt.show()
