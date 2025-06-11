@@ -1,0 +1,59 @@
+------------------FILAMENT SPEED AS FUNCTION OF LENGTH--------------------------
+
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(5,4))
+plt.scatter(
+    summary['avg_length_px'],
+    summary['avg_speed_px_per_frame'],
+    s=20, alpha=0.7, color='mediumseagreen', edgecolor='k'
+)
+plt.xlabel('Average Filament Length (px)')
+plt.ylabel('Average Speed (px/frame)')
+plt.title('Filament Speed as a function of Length')
+plt.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+------------------BINNED TREND--------------------------
+
+import numpy as np
+
+min_len = summary['avg_length_px'].min()
+max_len = summary['avg_length_px'].max()
+bin_width = 10
+bins = np.arange(np.floor(min_len), np.ceil(max_len) + bin_width, bin_width)
+
+summary['length_bin'] = pd.cut(summary['avg_length_px'], bins=bins, include_lowest=True)
+
+binned = summary.groupby('length_bin')['avg_speed_px_per_frame'].agg(
+    mean_speed='mean',
+    count='size'
+).reset_index()
+
+bin_centers = bins[:-1] + bin_width/2
+
+valid_bins = binned[binned['count'] > 0].copy()
+valid_bins['bin_center'] = [interval.left + bin_width/2 for interval in valid_bins['length_bin']]
+
+plt.figure(figsize=(5,4))
+# Raw scatter (semi‐transparent)
+plt.scatter(
+    summary['avg_length_px'],
+    summary['avg_speed_px_per_frame'],
+    s=15, alpha=0.4, color='lightgray'
+)
+
+plt.plot(
+    valid_bins['bin_center'],
+    valid_bins['mean_speed'],
+    '-o', color='crimson', label='Binned Mean'
+)
+
+plt.xlabel('Average Filament Length (px)')
+plt.ylabel('Average Speed (px/frame)')
+plt.title('Filament Speed vs. Length (Binned Trend)')
+plt.legend()
+plt.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
