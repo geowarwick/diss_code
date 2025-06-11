@@ -1,0 +1,50 @@
+-----------------THRESHOLDING AT 50---------------
+
+import numpy as np
+from PIL import Image
+import matplotlib.pyplot as plt
+
+test_image_path = "vid2/8bit_halfscale/Fused_Red_24-02-12_064-067_0-500_00000.tif"
+
+im = np.array(Image.open(test_image_path))
+
+thresh = 50
+
+binary = (im >= thresh).astype(int)
+
+fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+ax[0].imshow(im, cmap="gray");    ax[0].set_title("Original")
+ax[1].imshow(binary, cmap="gray");ax[1].set_title(f"Thresholded at {thresh}")
+plt.show()
+
+-----------------PIXEL INTENSITY DISTRIBUTION---------------
+
+import matplotlib.pyplot as plt
+plt.figure(figsize=(6,4))
+plt.hist(im.ravel(), bins=256, color='gray', edgecolor='black')
+plt.yscale('log')                          # ← key change
+plt.axvline(otsu_val, color='red', linestyle='--', linewidth=1.5)
+plt.xlabel('Pixel Intensity (0–255)', fontsize=12)
+plt.ylabel('Log₁₀ Frequency', fontsize=12)
+plt.title('Pixel Intensity Distribution\nvid2 Frame 1 (log‐scale)', fontsize=14)
+plt.tight_layout()
+plt.show()
+
+-----------------OTSU THRESHOLDING---------------
+
+import numpy as np
+from PIL import Image
+import matplotlib.pyplot as plt
+from skimage.filters import threshold_otsu
+
+im = np.array(Image.open("vid2/8bit_halfscale/Fused_Red_24-02-12_064-067_0-500_00000.tif"))
+
+otsu = threshold_otsu(im)
+
+for t in (otsu, otsu+20):
+    binary = (im >= t)
+    plt.figure(figsize=(5,5))
+    plt.imshow(binary, cmap="gray")
+    plt.title(f"Threshold = {t:.0f}")
+    plt.axis("off")
+plt.show()
